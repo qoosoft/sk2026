@@ -21,6 +21,29 @@ function saveJson($file, $data) {
     }
 }
 
+function updateJsonLocked($file, $callback) {
+    global $configDir;
+    $handle = @fopen($configDir . $file, 'c+');
+    if (!$handle || !flock($handle, LOCK_EX)) {
+        if (is_resource($handle)) fclose($handle);
+        return false;
+    }
+    rewind($handle);
+    $data = json_decode(stream_get_contents($handle), true);
+    if (!is_array($data)) $data = [];
+    $callback($data);
+    $encoded = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+    $saved = false;
+    if ($encoded !== false) {
+        rewind($handle);
+        $saved = ftruncate($handle, 0) && fwrite($handle, $encoded) !== false;
+        if ($saved) fflush($handle);
+    }
+    flock($handle, LOCK_UN);
+    fclose($handle);
+    return $saved;
+}
+
 function logActivity($type, $detail) {
     $activity = loadJson('activity.json');
     if (!isset($activity['logs'])) $activity['logs'] = [];
@@ -138,25 +161,26 @@ foreach ($scheduled as $key => $sched) {
         continue;
     }
 
-    $queue = loadJson('sms_queue.json');
-    if (!isset($queue['queue'])) $queue['queue'] = [];
     $msgId = 'sched_' . uniqid();
-    foreach ($numbers as $num) {
-        $queue['queue'][] = [
-            'id' => $msgId . '_' . mt_rand(1000, 9999),
-            'message_id' => $msgId,
-            'to' => trim($num),
-            'message' => $message,
-            'status' => 'queued',
-            'created_at' => date('Y-m-d H:i:s'),
-            'sent_at' => null,
-            'source' => 'scheduled',
-            'api_key_id' => $sched['api_key_id'] ?? null,
-            'error' => null,
-            'assigned_device' => null
-        ];
-    }
-    saveJson('sms_queue.json', $queue);
+    $queueSaved = updateJsonLocked('sms_queue.json', function (&$queue) use ($numbers, $message, $sched, $msgId) {
+        if (!isset($queue['queue']) || !is_array($queue['queue'])) $queue['queue'] = [];
+        foreach ($numbers as $num) {
+            $queue['queue'][] = [
+                'id' => $msgId . '_' . mt_rand(1000, 9999),
+                'message_id' => $msgId,
+                'to' => trim($num),
+                'message' => $message,
+                'status' => 'queued',
+                'created_at' => date('Y-m-d H:i:s'),
+                'sent_at' => null,
+                'source' => 'scheduled',
+                'api_key_id' => $sched['api_key_id'] ?? null,
+                'error' => null,
+                'assigned_device' => null
+            ];
+        }
+    });
+    if (!$queueSaved) continue;
 
     $recurring = $sched['recurring'] ?? 'none';
     if ($recurring === 'none') {
