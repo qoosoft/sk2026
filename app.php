@@ -23,10 +23,23 @@ if (preg_match('~^api/v1/([A-Za-z0-9_-]+)$~D', $route)) {
     exit;
 }
 
-// Preserve the original root installer/dashboard redirect behavior.
-if (file_exists(__DIR__ . '/config/admin.json')) {
-    header('Location: /dashboard/');
-} else {
-    header('Location: /setup.php');
+// Preserve the installation subdirectory in redirects.
+$scriptDir = str_replace(
+    '\\',
+    '/',
+    dirname($_SERVER['SCRIPT_NAME'] ?? '/')
+);
+
+$basePath = rtrim($scriptDir, '/');
+
+if ($basePath === '.') {
+    $basePath = '';
 }
+
+if (file_exists(__DIR__ . '/config/admin.json')) {
+    header('Location: ' . $basePath . '/dashboard/');
+} else {
+    header('Location: ' . $basePath . '/setup.php');
+}
+
 exit;
