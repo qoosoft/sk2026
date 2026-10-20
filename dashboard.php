@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/maintenance.php';
 session_start();
 if (isset($_COOKIE[session_name()])) {
     setcookie(session_name(), $_COOKIE[session_name()], [
