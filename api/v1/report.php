@@ -59,33 +59,68 @@ if (empty($status) || !in_array($status, ['sent', 'failed'])) {
     exit;
 }
 
-// Find the queue item and update it
-$smsQueue = loadJson('sms_queue.json');
+// Update the queue item while holding the same lock used by poll.php and send.php.
+$queuePath = $configDir . 'sms_queue.json';
+$queueHandle = @fopen($queuePath, 'c+');
+if (!$queueHandle || !flock($queueHandle, LOCK_EX)) {
+    if (is_resource($queueHandle)) fclose($queueHandle);
+    http_response_code(500);
+    echo json_encode(['ok' => false, 'error' => 'Unable to lock SMS queue']);
+    exit;
+}
+rewind($queueHandle);
+$smsQueue = json_decode(stream_get_contents($queueHandle), true);
+if (!is_array($smsQueue)) $smsQueue = [];
 $queue = $smsQueue['queue'] ?? [];
 $itemFound = false;
+$wrongDevice = false;
 
 foreach ($queue as $idx => $item) {
-    if (($item['id'] ?? '') === $messageId) {
-        $queue[$idx]['status'] = $status;
-        if ($status === 'sent') {
-            $queue[$idx]['sent_at'] = date('Y-m-d H:i:s');
-        }
-        if ($error !== null && $error !== '') {
-            $queue[$idx]['error'] = $error;
-        }
-        $itemFound = true;
+    if (($item['id'] ?? '') !== $messageId) continue;
+    if (!empty($item['assigned_device']) && $item['assigned_device'] !== $deviceId) {
+        $wrongDevice = true;
         break;
     }
+    $queue[$idx]['status'] = $status;
+    if ($status === 'sent') $queue[$idx]['sent_at'] = date('Y-m-d H:i:s');
+    if ($error !== null && $error !== '') $queue[$idx]['error'] = $error;
+    $itemFound = true;
+    break;
 }
 
 if (!$itemFound) {
-    http_response_code(404);
-    echo json_encode(['ok' => false, 'error' => 'Message not found in queue']);
+    flock($queueHandle, LOCK_UN);
+    fclose($queueHandle);
+    if ($wrongDevice) {
+        http_response_code(403);
+        echo json_encode(['ok' => false, 'error' => 'Message is assigned to another device']);
+    } else {
+        http_response_code(404);
+        echo json_encode(['ok' => false, 'error' => 'Message not found in queue']);
+    }
     exit;
 }
 
 $smsQueue['queue'] = $queue;
-saveJson('sms_queue.json', $smsQueue);
+$encodedQueue = json_encode($smsQueue, JSON_PRETTY_PRINT);
+if ($encodedQueue === false) {
+    flock($queueHandle, LOCK_UN);
+    fclose($queueHandle);
+    http_response_code(500);
+    echo json_encode(['ok' => false, 'error' => 'Unable to encode SMS queue']);
+    exit;
+}
+rewind($queueHandle);
+if (!ftruncate($queueHandle, 0) || fwrite($queueHandle, $encodedQueue) === false) {
+    flock($queueHandle, LOCK_UN);
+    fclose($queueHandle);
+    http_response_code(500);
+    echo json_encode(['ok' => false, 'error' => 'Unable to save SMS queue']);
+    exit;
+}
+fflush($queueHandle);
+flock($queueHandle, LOCK_UN);
+fclose($queueHandle);
 
 // Log activity
 if ($status === 'sent') {
