@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/maintenance.php';
 /**
  * SMSKIT unified API controller; PHP 7.4 compatible.
  * Public endpoint URLs remain /api/v1/{endpoint} for Android compatibility.
