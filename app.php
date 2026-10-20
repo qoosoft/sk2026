@@ -9,7 +9,7 @@
 $route = isset($_GET['route']) ? (string) $_GET['route'] : '';
 
 if ($route === 'dashboard') {
-    require __DIR__ . '/dashboard/index.php';
+    require __DIR__ . '/dashboard.php';
     exit;
 }
 
@@ -24,4 +24,9 @@ if (preg_match('~^api/v1/([A-Za-z0-9_-]+)$~D', $route)) {
 }
 
 // Preserve the original root installer/dashboard redirect behavior.
-require __DIR__ . '/index.php';
+if (file_exists(__DIR__ . '/config/admin.json')) {
+    header('Location: /dashboard/');
+} else {
+    header('Location: /setup.php');
+}
+exit;
