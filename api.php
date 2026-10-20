@@ -19,7 +19,7 @@ $endpoint = $matches[1];
 function normalizePhoneNumber($value) {
     if (!is_string($value) && !is_numeric($value)) return '';
     $number = (string)$value;
-    if (!preg_match('/^\\+?[0-9]{7,15}$/D', $number)) return '';
+    if (!preg_match('/^\+?[0-9]{7,15}$/D', $number)) return '';
     return $number;
 }
 
