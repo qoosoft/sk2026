@@ -131,7 +131,7 @@ foreach ($scheduled as $key => $sched) {
             'created_at' => date('Y-m-d H:i:s'),
             'sent_at' => null,
             'source' => 'scheduled',
-            'api_key_id' => null,
+            'api_key_id' => $sched['api_key_id'] ?? null,
             'error' => null,
             'assigned_device' => null
         ];
@@ -172,15 +172,34 @@ usort($onlineIds, function($a, $b) {
 $onlineDeviceIds = array_map(function($d) { return $d['device_id']; }, $onlineIds);
 $assignIdx = 0;
 
-if (!empty($onlineDeviceIds) && isset($queue['queue'])) {
+// Enforce the API key's current device scope before automatic assignment.
+$dbForScopes = loadJson('database.json');
+$apiKeysForScopes = $dbForScopes['api_keys'] ?? [];
+$keyScopes = [];
+foreach ($apiKeysForScopes as $scopeKey) {
+    if (!empty($scopeKey['id'])) $keyScopes[$scopeKey['id']] = $scopeKey;
+}
+$queueChanged = false;
+if (isset($queue['queue'])) {
     foreach ($queue['queue'] as &$item) {
-        if (($item['status'] ?? '') === 'queued' && empty($item['assigned_device'])) {
+        if (($item['status'] ?? '') !== 'queued') continue;
+        $keyId = $item['api_key_id'] ?? null;
+        $keyInfo = ($keyId !== null && isset($keyScopes[$keyId])) ? $keyScopes[$keyId] : null;
+        $scope = $keyInfo['device_scope'] ?? 'all';
+        if ($scope === 'device' && !empty($keyInfo['device_id'])) {
+            // Keep restricted messages pending for their selected device, even while it is offline.
+            if (($item['assigned_device'] ?? '') !== $keyInfo['device_id']) {
+                $item['assigned_device'] = $keyInfo['device_id'];
+                $queueChanged = true;
+            }
+        } elseif (empty($item['assigned_device']) && !empty($onlineDeviceIds)) {
             $item['assigned_device'] = $onlineDeviceIds[$assignIdx % count($onlineDeviceIds)];
             $assignIdx++;
+            $queueChanged = true;
         }
     }
     unset($item);
-    saveJson('sms_queue.json', $queue);
+    if ($queueChanged) saveJson('sms_queue.json', $queue);
 }
 
 $commands = [];
