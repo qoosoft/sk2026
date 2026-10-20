@@ -332,6 +332,7 @@ echo json_encode([
     'commands' => $commands,
     'timestamp' => date('Y-m-d H:i:s')
 ], JSON_PRETTY_PRINT);
+exit;
 }
 
 if ($endpoint === 'receive') {
@@ -417,6 +418,7 @@ if (isset($deviceTokens['devices'])) {
 
 echo json_encode(['ok' => true]);
 
+exit;
 }
 
 if ($endpoint === 'report') {
@@ -566,6 +568,7 @@ if (isset($deviceTokens['devices'])) {
 
 echo json_encode(['ok' => true]);
 
+exit;
 }
 
 if ($endpoint === 'schedule') {
@@ -696,6 +699,7 @@ echo json_encode([
     'numbers_count' => count($numbers),
     'schedule_time' => $scheduleTime
 ]);
+exit;
 }
 
 if ($endpoint === 'send') {
@@ -922,6 +926,7 @@ echo json_encode([
     'queued' => true
 ]);
 
+exit;
 }
 
 if ($endpoint === 'statistics') {
@@ -1097,6 +1102,7 @@ echo json_encode([
     'devices_online_count' => $onlineCount
 ]);
 
+exit;
 }
 
 if ($endpoint === 'status') {
@@ -1289,6 +1295,7 @@ echo json_encode([
     'items' => $items
 ]);
 
+exit;
 }
 
 if ($endpoint === 'validate') {
@@ -1523,6 +1530,7 @@ echo json_encode([
     'country_code' => $detectedCode
 ]);
 
+exit;
 }
 
 http_response_code(404);
