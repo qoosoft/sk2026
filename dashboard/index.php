@@ -659,7 +659,7 @@ button,input,textarea,select{font-family:var(--f-ui)}button{cursor:pointer;borde
     <div class="panel-title">Recent Activity</div>
     <?php if (empty($recentLogs)): ?><div class="empty-state">No activity yet</div>
     <?php else: ?><div class="activity-list">
-      <?php foreach ($recentLogs as $log): $type=$log['type']??'unknown';$bc=match(true){str_starts_with($type,'sms_')=>'badge-sms',str_starts_with($type,'api_')=>'badge-api',$type==='system'=>'badge-system',$type==='schedule'=>'badge-schedule',$type==='login'=>'badge-login',default=>'badge-default'};?>
+      <?php foreach ($recentLogs as $log): $type=$log['type']??'unknown'; if (strpos($type,'sms_')===0) { $bc='badge-sms'; } elseif (strpos($type,'api_')===0) { $bc='badge-api'; } elseif ($type==='system') { $bc='badge-system'; } elseif ($type==='schedule') { $bc='badge-schedule'; } elseif ($type==='login') { $bc='badge-login'; } else { $bc='badge-default'; } ?>
       <div class="activity-item"><span class="activity-badge <?php echo $bc; ?>"><?php echo htmlspecialchars($type); ?></span><span class="activity-detail"><?php echo htmlspecialchars($log['detail']??''); ?></span><span class="activity-time"><?php echo date('H:i',strtotime($log['timestamp']??'0')); ?></span></div>
       <?php endforeach; ?>
     </div><?php endif; ?>
