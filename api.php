@@ -32,7 +32,6 @@ function normalizePhoneNumber($value) {
 
     // Allow common visual separators.
     $number = preg_replace('/[\\s\\-().]+/u', '', $number);
-    $hasPlus = (strpos($number, '+') === 0);
     $digits = preg_replace('/\\D/', '', $number);
     if ($digits === '') return '';
 
@@ -46,7 +45,7 @@ function normalizePhoneNumber($value) {
     if (strlen($digits) === 10 && substr($digits, 0, 1) === '9') {
         return '+98' . $digits;
     }
-    if (strlen($digits) === 13 && substr($digits, 0, 4) === '0098') {
+    if (substr($digits, 0, 4) === '0098') {
         return '+' . substr($digits, 2);
     }
     if (strlen($digits) === 12 && substr($digits, 0, 2) === '98') {
