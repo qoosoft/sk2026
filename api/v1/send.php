@@ -28,7 +28,7 @@ foreach ($numbers as $number) {
     if (empty($number)) {
         sendError(400, 'Empty phone number found in numbers array.');
     }
-    if (!str_starts_with($number, '+')) {
+    if (strpos($number, '+') !== 0) {
         sendError(400, 'Phone number must start with +: ' . $number);
     }
     $digitsOnly = preg_replace('/[^0-9]/', '', $number);
