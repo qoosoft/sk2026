@@ -95,6 +95,7 @@ if (empty($scheduleTime)) {
 }
 
 $schedId = 'sched_' . uniqid();
+if (!isset($db['scheduled_sms']) || !is_array($db['scheduled_sms'])) $db['scheduled_sms'] = [];
 $db['scheduled_sms'][] = [
     'id' => $schedId,
     'numbers' => $numbers,
