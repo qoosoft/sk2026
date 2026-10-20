@@ -95,6 +95,16 @@ if (empty($scheduleTime)) {
 }
 
 $schedId = 'sched_' . uniqid();
+$schedulerLock = @fopen($configDir . 'scheduler.lock', 'c');
+if (!$schedulerLock || !flock($schedulerLock, LOCK_EX)) {
+    if (is_resource($schedulerLock)) fclose($schedulerLock);
+    http_response_code(500);
+    echo json_encode(['ok' => false, 'error' => 'Unable to lock scheduler.']);
+    exit;
+}
+
+// Read the latest database only after taking the same lock used by poll.php.
+$db = loadJson('database.json');
 if (!isset($db['scheduled_sms']) || !is_array($db['scheduled_sms'])) $db['scheduled_sms'] = [];
 $db['scheduled_sms'][] = [
     'id' => $schedId,
@@ -107,6 +117,8 @@ $db['scheduled_sms'][] = [
     'created_at' => date('Y-m-d H:i:s')
 ];
 saveJson('database.json', $db);
+flock($schedulerLock, LOCK_UN);
+fclose($schedulerLock);
 
 echo json_encode([
     'ok' => true,
