@@ -13,51 +13,14 @@ if (!preg_match('~^api/v1/([A-Za-z0-9_-]+)$~D', $route, $matches)) {
 }
 $endpoint = $matches[1];
 /**
- * Normalize phone numbers to international E.164-style format.
- * Iranian mobile examples: 09123456789, 989123456789, +989123456789
- * are all stored as +989123456789.
+ * Validate phone number syntax without normalizing or changing the supplied value.
+ * Accepts 7-15 ASCII digits, optionally prefixed with +.
  */
 function normalizePhoneNumber($value) {
     if (!is_string($value) && !is_numeric($value)) return '';
-    $number = trim((string)$value);
-    if ($number === '') return '';
-
-    // Convert Persian and Arabic-Indic digits to ASCII digits.
-    $number = strtr($number, [
-        '۰'=>'0','۱'=>'1','۲'=>'2','۳'=>'3','۴'=>'4',
-        '۵'=>'5','۶'=>'6','۷'=>'7','۸'=>'8','۹'=>'9',
-        '٠'=>'0','١'=>'1','٢'=>'2','٣'=>'3','٤'=>'4',
-        '٥'=>'5','٦'=>'6','٧'=>'7','٨'=>'8','٩'=>'9'
-    ]);
-
-    // Allow common visual separators.
-    $number = preg_replace('/[\\s\\-().]+/u', '', $number);
-    $digits = preg_replace('/\\D/', '', $number);
-    if ($digits === '') return '';
-
-    // Iranian mobile: 09xxxxxxxxx or +09xxxxxxxxx -> +989xxxxxxxxx.
-    if (strlen($digits) === 11 && substr($digits, 0, 2) === '09') {
-        return '+98' . substr($digits, 1);
-    }
-    if (strlen($digits) === 12 && substr($digits, 0, 3) === '989') {
-        return '+' . $digits;
-    }
-    if (strlen($digits) === 10 && substr($digits, 0, 1) === '9') {
-        return '+98' . $digits;
-    }
-    if (substr($digits, 0, 4) === '0098') {
-        return '+' . substr($digits, 2);
-    }
-    if (strlen($digits) === 12 && substr($digits, 0, 2) === '98') {
-        return '+' . $digits;
-    }
-
-    // For other international numbers, retain an explicit + or add one
-    // when the caller supplied a country code without it.
-    if (strlen($digits) >= 7 && strlen($digits) <= 15) {
-        return '+' . $digits;
-    }
-    return '';
+    $number = (string)$value;
+    if (!preg_match('/^\\+?[0-9]{7,15}$/D', $number)) return '';
+    return $number;
 }
 
 if ($endpoint === 'poll') {
@@ -1593,17 +1556,17 @@ if ($number === '') {
     sendError(400, 'number is required and must be a valid phone number');
 }
 
-$digitsOnly = preg_replace('/\\D/', '', $number);
+$digitsOnly = ltrim($number, '+');
 $digitCount = strlen($digitsOnly);
 
-if ($digitCount < 8 || $digitCount > 16) {
+if ($digitCount < 7 || $digitCount > 15) {
     echo json_encode([
         'ok' => true,
         'valid' => false,
         'number' => $number,
         'country' => null,
         'country_code' => null,
-        'reason' => 'Number must have 8-16 digits after the +' . $digitCount
+        'reason' => 'Number must contain 7-15 digits; received ' . $digitCount
     ]);
     exit;
 }
@@ -1641,15 +1604,17 @@ usort($prefixes, function($a, $b) {
     return strlen($b) - strlen($a);
 });
 
+// For country detection only, add a temporary + when the caller omitted it.
+$countryNumber = (isset($number[0]) && $number[0] === '+') ? $number : '+' . $number;
 foreach ($prefixes as $prefix) {
-    if (strpos($number, $prefix) === 0) {
+    if (strpos($countryNumber, $prefix) === 0) {
         $detectedCountry = $countryMap[$prefix]['country'];
         $detectedCode = $countryMap[$prefix]['code'];
         break;
     }
 }
 
-$afterPlus = substr($number, 1);
+$afterPlus = ltrim($number, '+');
 if (!ctype_digit($afterPlus)) {
     echo json_encode([
         'ok' => true,
@@ -1657,7 +1622,7 @@ if (!ctype_digit($afterPlus)) {
         'number' => $number,
         'country' => $detectedCountry,
         'country_code' => $detectedCode,
-        'reason' => 'Number contains invalid characters after the +' . $afterPlus
+        'reason' => 'Number must contain only digits, with an optional leading +'
     ]);
     exit;
 }
