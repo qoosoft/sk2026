@@ -102,6 +102,7 @@ $db['scheduled_sms'][] = [
     'schedule_time' => $scheduleTime,
     'recurring' => $recurring,
     'status' => 'pending',
+    'api_key_id' => $keyData['id'] ?? null,
     'created_at' => date('Y-m-d H:i:s')
 ];
 saveJson('database.json', $db);
