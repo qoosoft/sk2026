@@ -18,21 +18,8 @@ if ($route === 'setup') {
     exit;
 }
 
-if (preg_match('~^api/v1/([A-Za-z0-9_-]+)$~D', $route, $matches)) {
-    $endpoint = $matches[1];
-
-    // Internal helper files must never be exposed as API endpoints.
-    if ($endpoint !== '' && $endpoint[0] !== '_') {
-        $handler = __DIR__ . '/api/v1/' . $endpoint . '.php';
-        if (is_file($handler)) {
-            require $handler;
-            exit;
-        }
-    }
-
-    http_response_code(404);
-    header('Content-Type: application/json; charset=utf-8');
-    echo json_encode(['ok' => false, 'error' => 'API endpoint not found']);
+if (preg_match('~^api/v1/([A-Za-z0-9_-]+)$~D', $route)) {
+    require __DIR__ . '/api.php';
     exit;
 }
 
