@@ -740,28 +740,50 @@ function sendError($code, $message) {
     exit;
 }
 
-// Extract token from Authorization header or query parameter
+// Extract API key from Authorization header, POST fields/JSON, or legacy query parameter.
 $token = null;
 
-// Check Authorization header
+// Preferred method: Authorization: Bearer <API_KEY>
 $authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
 if (empty($authHeader)) {
     $authHeader = $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
 }
+if (!empty($authHeader) && preg_match('/Bearer\s+(\S+)/i', $authHeader, $matches)) {
+    $token = trim($matches[1]);
+}
 
-if (!empty($authHeader)) {
-    if (preg_match('/Bearer\s+(\S+)/i', $authHeader, $matches)) {
-        $token = $matches[1];
+// POST form fields: api_key=... or key=...
+if (empty($token)) {
+    $postToken = $_POST['api_key'] ?? ($_POST['key'] ?? '');
+    if (is_string($postToken) && trim($postToken) !== '') {
+        $token = trim($postToken);
     }
 }
 
-// Fallback to query parameter
+// JSON POST body: {"api_key":"..."} or {"key":"..."}
+if (empty($token) && strtoupper($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
+    $rawAuthBody = file_get_contents('php://input');
+    if (is_string($rawAuthBody) && $rawAuthBody !== '') {
+        $authBody = json_decode($rawAuthBody, true);
+        if (is_array($authBody)) {
+            $jsonToken = $authBody['api_key'] ?? ($authBody['key'] ?? '');
+            if (is_string($jsonToken) && trim($jsonToken) !== '') {
+                $token = trim($jsonToken);
+            }
+        }
+    }
+}
+
+// Backward compatibility: legacy query parameter.
 if (empty($token)) {
-    $token = $_GET['api_key'] ?? null;
+    $queryToken = $_GET['api_key'] ?? '';
+    if (is_string($queryToken) && trim($queryToken) !== '') {
+        $token = trim($queryToken);
+    }
 }
 
 if (empty($token)) {
-    sendError(401, 'Authentication required. Provide API key via Authorization: Bearer header or ?api_key= parameter.');
+    sendError(401, 'Authentication required. Provide API key in Authorization: Bearer header, POST field api_key/key, or JSON body api_key/key.');
 }
 
 // Look up key
@@ -967,28 +989,50 @@ function sendError($code, $message) {
     exit;
 }
 
-// Extract token from Authorization header or query parameter
+// Extract API key from Authorization header, POST fields/JSON, or legacy query parameter.
 $token = null;
 
-// Check Authorization header
+// Preferred method: Authorization: Bearer <API_KEY>
 $authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
 if (empty($authHeader)) {
     $authHeader = $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
 }
+if (!empty($authHeader) && preg_match('/Bearer\s+(\S+)/i', $authHeader, $matches)) {
+    $token = trim($matches[1]);
+}
 
-if (!empty($authHeader)) {
-    if (preg_match('/Bearer\s+(\S+)/i', $authHeader, $matches)) {
-        $token = $matches[1];
+// POST form fields: api_key=... or key=...
+if (empty($token)) {
+    $postToken = $_POST['api_key'] ?? ($_POST['key'] ?? '');
+    if (is_string($postToken) && trim($postToken) !== '') {
+        $token = trim($postToken);
     }
 }
 
-// Fallback to query parameter
+// JSON POST body: {"api_key":"..."} or {"key":"..."}
+if (empty($token) && strtoupper($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
+    $rawAuthBody = file_get_contents('php://input');
+    if (is_string($rawAuthBody) && $rawAuthBody !== '') {
+        $authBody = json_decode($rawAuthBody, true);
+        if (is_array($authBody)) {
+            $jsonToken = $authBody['api_key'] ?? ($authBody['key'] ?? '');
+            if (is_string($jsonToken) && trim($jsonToken) !== '') {
+                $token = trim($jsonToken);
+            }
+        }
+    }
+}
+
+// Backward compatibility: legacy query parameter.
 if (empty($token)) {
-    $token = $_GET['api_key'] ?? null;
+    $queryToken = $_GET['api_key'] ?? '';
+    if (is_string($queryToken) && trim($queryToken) !== '') {
+        $token = trim($queryToken);
+    }
 }
 
 if (empty($token)) {
-    sendError(401, 'Authentication required. Provide API key via Authorization: Bearer header or ?api_key= parameter.');
+    sendError(401, 'Authentication required. Provide API key in Authorization: Bearer header, POST field api_key/key, or JSON body api_key/key.');
 }
 
 // Look up key
@@ -1143,28 +1187,50 @@ function sendError($code, $message) {
     exit;
 }
 
-// Extract token from Authorization header or query parameter
+// Extract API key from Authorization header, POST fields/JSON, or legacy query parameter.
 $token = null;
 
-// Check Authorization header
+// Preferred method: Authorization: Bearer <API_KEY>
 $authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
 if (empty($authHeader)) {
     $authHeader = $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
 }
+if (!empty($authHeader) && preg_match('/Bearer\s+(\S+)/i', $authHeader, $matches)) {
+    $token = trim($matches[1]);
+}
 
-if (!empty($authHeader)) {
-    if (preg_match('/Bearer\s+(\S+)/i', $authHeader, $matches)) {
-        $token = $matches[1];
+// POST form fields: api_key=... or key=...
+if (empty($token)) {
+    $postToken = $_POST['api_key'] ?? ($_POST['key'] ?? '');
+    if (is_string($postToken) && trim($postToken) !== '') {
+        $token = trim($postToken);
     }
 }
 
-// Fallback to query parameter
+// JSON POST body: {"api_key":"..."} or {"key":"..."}
+if (empty($token) && strtoupper($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
+    $rawAuthBody = file_get_contents('php://input');
+    if (is_string($rawAuthBody) && $rawAuthBody !== '') {
+        $authBody = json_decode($rawAuthBody, true);
+        if (is_array($authBody)) {
+            $jsonToken = $authBody['api_key'] ?? ($authBody['key'] ?? '');
+            if (is_string($jsonToken) && trim($jsonToken) !== '') {
+                $token = trim($jsonToken);
+            }
+        }
+    }
+}
+
+// Backward compatibility: legacy query parameter.
 if (empty($token)) {
-    $token = $_GET['api_key'] ?? null;
+    $queryToken = $_GET['api_key'] ?? '';
+    if (is_string($queryToken) && trim($queryToken) !== '') {
+        $token = trim($queryToken);
+    }
 }
 
 if (empty($token)) {
-    sendError(401, 'Authentication required. Provide API key via Authorization: Bearer header or ?api_key= parameter.');
+    sendError(401, 'Authentication required. Provide API key in Authorization: Bearer header, POST field api_key/key, or JSON body api_key/key.');
 }
 
 // Look up key
@@ -1336,28 +1402,50 @@ function sendError($code, $message) {
     exit;
 }
 
-// Extract token from Authorization header or query parameter
+// Extract API key from Authorization header, POST fields/JSON, or legacy query parameter.
 $token = null;
 
-// Check Authorization header
+// Preferred method: Authorization: Bearer <API_KEY>
 $authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
 if (empty($authHeader)) {
     $authHeader = $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
 }
+if (!empty($authHeader) && preg_match('/Bearer\s+(\S+)/i', $authHeader, $matches)) {
+    $token = trim($matches[1]);
+}
 
-if (!empty($authHeader)) {
-    if (preg_match('/Bearer\s+(\S+)/i', $authHeader, $matches)) {
-        $token = $matches[1];
+// POST form fields: api_key=... or key=...
+if (empty($token)) {
+    $postToken = $_POST['api_key'] ?? ($_POST['key'] ?? '');
+    if (is_string($postToken) && trim($postToken) !== '') {
+        $token = trim($postToken);
     }
 }
 
-// Fallback to query parameter
+// JSON POST body: {"api_key":"..."} or {"key":"..."}
+if (empty($token) && strtoupper($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
+    $rawAuthBody = file_get_contents('php://input');
+    if (is_string($rawAuthBody) && $rawAuthBody !== '') {
+        $authBody = json_decode($rawAuthBody, true);
+        if (is_array($authBody)) {
+            $jsonToken = $authBody['api_key'] ?? ($authBody['key'] ?? '');
+            if (is_string($jsonToken) && trim($jsonToken) !== '') {
+                $token = trim($jsonToken);
+            }
+        }
+    }
+}
+
+// Backward compatibility: legacy query parameter.
 if (empty($token)) {
-    $token = $_GET['api_key'] ?? null;
+    $queryToken = $_GET['api_key'] ?? '';
+    if (is_string($queryToken) && trim($queryToken) !== '') {
+        $token = trim($queryToken);
+    }
 }
 
 if (empty($token)) {
-    sendError(401, 'Authentication required. Provide API key via Authorization: Bearer header or ?api_key= parameter.');
+    sendError(401, 'Authentication required. Provide API key in Authorization: Bearer header, POST field api_key/key, or JSON body api_key/key.');
 }
 
 // Look up key
