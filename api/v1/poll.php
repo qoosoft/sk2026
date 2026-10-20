@@ -139,7 +139,13 @@ if (!empty($deviceId)) {
 }
 
 $schedulerLock = @fopen($configDir . 'scheduler.lock', 'c');
-if ($schedulerLock) flock($schedulerLock, LOCK_EX);
+if (!$schedulerLock || !flock($schedulerLock, LOCK_EX)) {
+    if (is_resource($schedulerLock)) fclose($schedulerLock);
+    http_response_code(500);
+    header('Content-Type: application/json');
+    echo json_encode(['ok' => false, 'error' => 'Unable to lock scheduler']);
+    exit;
+}
 
 $db = loadJson('database.json');
 $scheduled = $db['scheduled_sms'] ?? [];
