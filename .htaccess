@@ -9,8 +9,8 @@ RewriteRule ^(.*)$ https://%{HTTP_HOST}/$1 [L,R=301]
 RewriteRule ^config/ - [F,L]
 
 # Central dispatcher for legacy API URLs (including direct .php URLs).
+# Rules are relative to this .htaccess location, so subdirectory installs work.
 # Keep query strings and POST bodies intact; the endpoint handler remains compatible.
-RewriteBase /
 RewriteRule ^api/v1/([^/]+)/([^/]+)/?$ app.php?route=api/v1/$1&id=$2 [L,QSA]
 RewriteRule ^api/v1/([^/]+?)(?:\.php)?/?$ app.php?route=api/v1/$1 [L,QSA]
 
