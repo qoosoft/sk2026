@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/maintenance.php';
 session_start();
 if (isset($_COOKIE[session_name()])) {
     setcookie(session_name(), $_COOKIE[session_name()], [
@@ -7,10 +8,10 @@ if (isset($_COOKIE[session_name()])) {
     ]);
 }
 
-$configDir = __DIR__ . '/../config/';
+$configDir = __DIR__ . '/config/';
 
 if (!file_exists($configDir . 'admin.json')) {
-    header('Location: ../setup.php');
+    header('Location: /setup.php');
     exit;
 }
 
@@ -35,6 +36,29 @@ function saveJson($file, $data) {
     }
 }
 
+function updateJsonLocked($file, $callback) {
+    global $configDir;
+    $fp = @fopen($configDir . $file, 'c+');
+    if (!$fp || !flock($fp, LOCK_EX)) {
+        if (is_resource($fp)) fclose($fp);
+        return false;
+    }
+    rewind($fp);
+    $data = json_decode(stream_get_contents($fp), true);
+    if (!is_array($data)) $data = [];
+    $callback($data);
+    $encoded = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+    $saved = false;
+    if ($encoded !== false) {
+        rewind($fp);
+        $saved = ftruncate($fp, 0) && fwrite($fp, $encoded) !== false;
+        if ($saved) fflush($fp);
+    }
+    flock($fp, LOCK_UN);
+    fclose($fp);
+    return $saved;
+}
+
 function logActivity($type, $detail) {
     $activity = loadJson('activity.json');
     if (!isset($activity['logs'])) $activity['logs'] = [];
@@ -54,7 +78,7 @@ if (!empty($settings['timezone'])) {
 
 if (isset($_GET['logout'])) {
     session_destroy();
-    header('Location: ./');
+    header('Location: /dashboard/');
     exit;
 }
 
@@ -142,18 +166,19 @@ if ($isAuthed && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['action'])
         }
 
         $msgId = 'msg_' . uniqid();
-        $queue = loadJson('sms_queue.json');
-        if (!isset($queue['queue'])) $queue['queue'] = [];
-        foreach ($numberList as $num) {
-            $queue['queue'][] = [
-                'id' => $msgId . '_' . mt_rand(1000,9999), 'message_id' => $msgId,
-                'to' => $num, 'message' => $message, 'status' => 'queued',
-                'created_at' => date('Y-m-d H:i:s'), 'sent_at' => null,
-                'source' => 'dashboard', 'api_key_id' => null, 'error' => null,
-                'assigned_device' => $assigned
-            ];
-        }
-        saveJson('sms_queue.json', $queue);
+        $queueSaved = updateJsonLocked('sms_queue.json', function (&$queue) use ($numberList, $message, $assigned, $msgId) {
+            if (!isset($queue['queue']) || !is_array($queue['queue'])) $queue['queue'] = [];
+            foreach ($numberList as $num) {
+                $queue['queue'][] = [
+                    'id' => $msgId . '_' . mt_rand(1000,9999), 'message_id' => $msgId,
+                    'to' => $num, 'message' => $message, 'status' => 'queued',
+                    'created_at' => date('Y-m-d H:i:s'), 'sent_at' => null,
+                    'source' => 'dashboard', 'api_key_id' => null, 'error' => null,
+                    'assigned_device' => $assigned
+                ];
+            }
+        });
+        if (!$queueSaved) { echo json_encode(['ok' => false, 'error' => 'Unable to save SMS queue']); exit; }
         logActivity('sms_sent', 'Queued SMS to ' . count($numberList) . ' number(s): ' . implode(', ', $numberList));
         echo json_encode(['ok' => true, 'msg_id' => $msgId, 'count' => count($numberList), 'device' => $assigned]);
         exit;
@@ -168,14 +193,24 @@ if ($isAuthed && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['action'])
         if (empty($numberList) || empty($message) || empty($scheduleTime)) {
             echo json_encode(['ok' => false, 'error' => 'All fields are required']); exit;
         }
+        $schedulerLock = @fopen($configDir . 'scheduler.lock', 'c');
+        if (!$schedulerLock || !flock($schedulerLock, LOCK_EX)) {
+            if (is_resource($schedulerLock)) fclose($schedulerLock);
+            http_response_code(500);
+            echo json_encode(['ok' => false, 'error' => 'Unable to lock scheduler']);
+            exit;
+        }
+        // Read latest state under the same lock used by poll.php and API scheduling.
         $db = loadJson('database.json');
-        if (!isset($db['scheduled_sms'])) $db['scheduled_sms'] = [];
+        if (!isset($db['scheduled_sms']) || !is_array($db['scheduled_sms'])) $db['scheduled_sms'] = [];
         $db['scheduled_sms'][] = [
             'id' => 'sched_' . uniqid(), 'numbers' => $numberList, 'message' => $message,
             'schedule_time' => $scheduleTime, 'recurring' => $recurring,
             'status' => 'pending', 'created_at' => date('Y-m-d H:i:s')
         ];
         saveJson('database.json', $db);
+        flock($schedulerLock, LOCK_UN);
+        fclose($schedulerLock);
         logActivity('schedule', 'Scheduled SMS for ' . $scheduleTime);
         echo json_encode(['ok' => true]);
         exit;
@@ -183,12 +218,21 @@ if ($isAuthed && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['action'])
 
     if ($action === 'del_schedule') {
         $schedId = $_POST['sched_id'] ?? '';
+        $schedulerLock = @fopen($configDir . 'scheduler.lock', 'c');
+        if (!$schedulerLock || !flock($schedulerLock, LOCK_EX)) {
+            if (is_resource($schedulerLock)) fclose($schedulerLock);
+            http_response_code(500);
+            echo json_encode(['ok' => false, 'error' => 'Unable to lock scheduler']);
+            exit;
+        }
         $db = loadJson('database.json');
-        if (isset($db['scheduled_sms'])) {
+        if (isset($db['scheduled_sms']) && is_array($db['scheduled_sms'])) {
             $db['scheduled_sms'] = array_values(array_filter($db['scheduled_sms'],
                 fn($s) => ($s['id'] ?? '') !== $schedId));
         }
         saveJson('database.json', $db);
+        flock($schedulerLock, LOCK_UN);
+        fclose($schedulerLock);
         logActivity('schedule', 'Deleted scheduled SMS: ' . $schedId);
         echo json_encode(['ok' => true]);
         exit;
@@ -196,9 +240,9 @@ if ($isAuthed && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['action'])
 
     if ($action === 'retry_sms') {
         $msgId = $_POST['msg_id'] ?? '';
-        $queue = loadJson('sms_queue.json');
         $found = false;
-        if (isset($queue['queue'])) {
+        $queueSaved = updateJsonLocked('sms_queue.json', function (&$queue) use ($msgId, &$found) {
+            if (!isset($queue['queue']) || !is_array($queue['queue'])) return;
             foreach ($queue['queue'] as &$item) {
                 if (($item['id'] ?? '') === $msgId || ($item['message_id'] ?? '') === $msgId) {
                     $item['status'] = 'queued';
@@ -208,9 +252,10 @@ if ($isAuthed && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['action'])
                 }
             }
             unset($item);
-        }
-        if ($found) {
-            saveJson('sms_queue.json', $queue);
+        });
+        if (!$queueSaved) {
+            echo json_encode(['ok' => false, 'error' => 'Unable to save SMS queue']);
+        } elseif ($found) {
             logActivity('sms_sent', 'Retried SMS: ' . $msgId);
             echo json_encode(['ok' => true]);
         } else {
@@ -223,6 +268,19 @@ if ($isAuthed && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['action'])
         $keyName    = $_POST['key_name'] ?? '';
         $rateLimit  = (int)($_POST['rate_limit'] ?? 100);
         $permissions = $_POST['permissions'] ?? ['send','status'];
+        $selectedDevice = trim($_POST['device_id'] ?? 'all');
+        $deviceScope = 'all';
+        if ($selectedDevice !== '' && $selectedDevice !== 'all') {
+            $knownDevices = loadJson('device_tokens.json')['devices'] ?? [];
+            $deviceExists = false;
+            foreach ($knownDevices as $knownDevice) {
+                if (($knownDevice['device_id'] ?? '') === $selectedDevice) { $deviceExists = true; break; }
+            }
+            if (!$deviceExists) { echo json_encode(['ok' => false, 'error' => 'Selected device does not exist']); exit; }
+            $deviceScope = 'device';
+        } else {
+            $selectedDevice = '';
+        }
         if (empty($keyName)) { echo json_encode(['ok' => false, 'error' => 'Key name required']); exit; }
         $raw     = 'sk_live_' . bin2hex(random_bytes(20));
         $hash    = hash('sha256', $raw);
@@ -233,11 +291,40 @@ if ($isAuthed && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['action'])
             'id' => 'key_' . uniqid(), 'name' => $keyName, 'hash' => $hash,
             'preview' => $preview, 'permissions' => $permissions,
             'rate_limit' => $rateLimit, 'usage_count' => 0,
+            'device_scope' => $deviceScope, 'device_id' => $selectedDevice,
             'last_used' => null, 'created_at' => date('Y-m-d H:i:s')
         ];
         saveJson('database.json', $db);
         logActivity('api_key', 'Generated API key: ' . $keyName);
         echo json_encode(['ok' => true, 'key' => $raw]);
+        exit;
+    }
+
+    if ($action === 'update_api_key_device') {
+        $keyId = $_POST['key_id'] ?? '';
+        $selectedDevice = trim($_POST['device_id'] ?? 'all');
+        $db = loadJson('database.json');
+        $keyIndex = null;
+        foreach (($db['api_keys'] ?? []) as $idx => $existingKey) {
+            if (($existingKey['id'] ?? '') === $keyId) { $keyIndex = $idx; break; }
+        }
+        if ($keyIndex === null) { echo json_encode(['ok' => false, 'error' => 'API key not found']); exit; }
+        if ($selectedDevice === '' || $selectedDevice === 'all') {
+            $db['api_keys'][$keyIndex]['device_scope'] = 'all';
+            $db['api_keys'][$keyIndex]['device_id'] = '';
+        } else {
+            $knownDevices = loadJson('device_tokens.json')['devices'] ?? [];
+            $deviceExists = false;
+            foreach ($knownDevices as $knownDevice) {
+                if (($knownDevice['device_id'] ?? '') === $selectedDevice) { $deviceExists = true; break; }
+            }
+            if (!$deviceExists) { echo json_encode(['ok' => false, 'error' => 'Selected device does not exist']); exit; }
+            $db['api_keys'][$keyIndex]['device_scope'] = 'device';
+            $db['api_keys'][$keyIndex]['device_id'] = $selectedDevice;
+        }
+        saveJson('database.json', $db);
+        logActivity('api_key', 'Updated device scope for API key: ' . $keyId);
+        echo json_encode(['ok' => true]);
         exit;
     }
 
@@ -617,7 +704,7 @@ button,input,textarea,select{font-family:var(--f-ui)}button{cursor:pointer;borde
     <div class="panel-title">Recent Activity</div>
     <?php if (empty($recentLogs)): ?><div class="empty-state">No activity yet</div>
     <?php else: ?><div class="activity-list">
-      <?php foreach ($recentLogs as $log): $type=$log['type']??'unknown';$bc=match(true){str_starts_with($type,'sms_')=>'badge-sms',str_starts_with($type,'api_')=>'badge-api',$type==='system'=>'badge-system',$type==='schedule'=>'badge-schedule',$type==='login'=>'badge-login',default=>'badge-default'};?>
+      <?php foreach ($recentLogs as $log): $type=$log['type']??'unknown'; if (strpos($type,'sms_')===0) { $bc='badge-sms'; } elseif (strpos($type,'api_')===0) { $bc='badge-api'; } elseif ($type==='system') { $bc='badge-system'; } elseif ($type==='schedule') { $bc='badge-schedule'; } elseif ($type==='login') { $bc='badge-login'; } else { $bc='badge-default'; } ?>
       <div class="activity-item"><span class="activity-badge <?php echo $bc; ?>"><?php echo htmlspecialchars($type); ?></span><span class="activity-detail"><?php echo htmlspecialchars($log['detail']??''); ?></span><span class="activity-time"><?php echo date('H:i',strtotime($log['timestamp']??'0')); ?></span></div>
       <?php endforeach; ?>
     </div><?php endif; ?>
@@ -748,14 +835,15 @@ button,input,textarea,select{font-family:var(--f-ui)}button{cursor:pointer;borde
     <div class="key-reveal" id="keyReveal" style="display:none;"><div class="key-text" id="keyText"></div><div class="key-warning">⚠ Save this key — it won't be shown again.</div><button class="btn btn-copy" onclick="copyKey()" style="margin-top:6px;">Copy Key</button></div>
     <div class="form-group"><label class="form-label">Key Name</label><input type="text" id="keyName" class="form-input" placeholder="My App Key"></div>
     <div class="form-group"><label class="form-label">Rate Limit (req/hour)</label><input type="number" id="keyRate" class="form-input" value="100" min="1" max="10000"></div>
+    <div class="form-group"><label class="form-label">Device restriction</label><select id="keyDevice" class="form-input"><option value="all">All devices (default)</option><?php foreach ($devices as $device): ?><option value="<?php echo htmlspecialchars($device['device_id'] ?? '', ENT_QUOTES, 'UTF-8'); ?>"><?php echo htmlspecialchars(($device['model'] ?? 'Device') . ' — ' . ($device['device_id'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></option><?php endforeach; ?></select><div class="muted-text" style="font-size:11px;margin-top:4px;">A restricted key never falls back to another device when its device is offline.</div></div>
     <div class="form-group"><label class="form-label">Permissions</label><div class="checkbox-group"><label class="checkbox-item"><input type="checkbox" id="perm-send" value="send" checked> Send</label><label class="checkbox-item"><input type="checkbox" id="perm-status" value="status" checked> Status</label><label class="checkbox-item"><input type="checkbox" id="perm-schedule" value="schedule"> Schedule</label><label class="checkbox-item"><input type="checkbox" id="perm-stats" value="stats"> Stats</label></div></div>
     <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;"><button class="btn btn-primary" onclick="genApiKey()">Generate</button><span class="status-msg" id="keyStatus"></span></div>
   </div>
   <div class="card">
     <div class="card-title">Active API Keys</div><div class="card-sub">Manage existing keys.</div>
     <?php if (empty($apiKeys)): ?><div class="empty-state">No API keys yet</div>
-    <?php else: ?><div class="table-wrap"><table class="data-table"><thead><tr><th>Name</th><th>Preview</th><th>Perms</th><th>Rate</th><th></th></tr></thead><tbody>
-      <?php foreach ($apiKeys as $key): ?><tr data-id="<?php echo htmlspecialchars($key['id']??''); ?>"><td><?php echo htmlspecialchars($key['name']??''); ?></td><td class="mono"><?php echo htmlspecialchars($key['preview']??''); ?></td><td><?php echo htmlspecialchars(implode(', ',array_slice($key['permissions']??[],0,2))); ?></td><td class="muted-text"><?php echo $key['rate_limit']??100; ?>/h</td><td><button class="btn btn-danger" onclick="revokeKey('<?php echo htmlspecialchars($key['id']??''); ?>',this)">Revoke</button></td></tr><?php endforeach; ?>
+    <?php else: ?><div class="table-wrap"><table class="data-table"><thead><tr><th>Name</th><th>Preview</th><th>Perms</th><th>Rate</th><th>Device scope</th><th></th></tr></thead><tbody>
+      <?php foreach ($apiKeys as $key): ?><tr data-id="<?php echo htmlspecialchars($key['id']??'', ENT_QUOTES, 'UTF-8'); ?>"><td><?php echo htmlspecialchars($key['name']??''); ?></td><td class="mono"><?php echo htmlspecialchars($key['preview']??''); ?></td><td><?php echo htmlspecialchars(implode(', ',array_slice($key['permissions']??[],0,2))); ?></td><td class="muted-text"><?php echo $key['rate_limit']??100; ?>/h</td><td><select class="form-input key-device-scope" data-key-id="<?php echo htmlspecialchars($key['id']??'', ENT_QUOTES, 'UTF-8'); ?>" data-current-value="<?php echo htmlspecialchars((($key['device_scope'] ?? 'all') === 'device' ? ($key['device_id'] ?? '') : 'all'), ENT_QUOTES, 'UTF-8'); ?>" onchange="updateKeyDevice(this)" style="min-width:170px;"><option value="all" <?php echo (($key['device_scope'] ?? 'all') !== 'device') ? 'selected' : ''; ?>>All devices</option><?php foreach ($devices as $device): ?><option value="<?php echo htmlspecialchars($device['device_id'] ?? '', ENT_QUOTES, 'UTF-8'); ?>" <?php echo (($key['device_scope'] ?? 'all') === 'device' && ($key['device_id'] ?? '') === ($device['device_id'] ?? '')) ? 'selected' : ''; ?>><?php echo htmlspecialchars(($device['model'] ?? 'Device') . ' — ' . ($device['device_id'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></option><?php endforeach; ?></select></td><td><button class="btn btn-danger" onclick="revokeKey('<?php echo htmlspecialchars($key['id']??'', ENT_QUOTES, 'UTF-8'); ?>',this)">Revoke</button></td></tr><?php endforeach; ?>
     </tbody></table></div><?php endif; ?>
   </div>
 </div>
@@ -849,7 +937,7 @@ window.genApiKey=async function(){
   if(!name){toast('Key name required','err');return;}
   statusEl.textContent='Generating…';statusEl.className='status-msg';
   const perms=['perm-send','perm-status','perm-schedule','perm-stats'].filter(id=>document.getElementById(id).checked).map(id=>document.getElementById(id).value);
-  const fd=new FormData();fd.append('key_name',name);fd.append('rate_limit',rate);perms.forEach(p=>fd.append('permissions[]',p));
+  const fd=new FormData();fd.append('key_name',name);fd.append('rate_limit',rate);fd.append('device_id',document.getElementById('keyDevice').value);perms.forEach(p=>fd.append('permissions[]',p));
   try{
     const r=await fetch('?action=gen_api_key',{method:'POST',body:fd});
     const d=await r.json();
@@ -858,6 +946,18 @@ window.genApiKey=async function(){
   }catch(e){statusEl.textContent='Error';statusEl.className='status-msg err';toast('Connection error','err');}
 };
 window.copyKey=function(){const key=document.getElementById('keyText').textContent;if(navigator.clipboard){navigator.clipboard.writeText(key).then(()=>toast('Copied!','ok'));}else{const ta=document.createElement('textarea');ta.value=key;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);toast('Copied!','ok');}};
+window.updateKeyDevice=async function(select){
+  const previous=select.dataset.previousValue || select.dataset.currentValue || 'all';
+  const fd=new FormData();fd.append('key_id',select.dataset.keyId);fd.append('device_id',select.value);
+  select.disabled=true;
+  try{
+    const r=await fetch('?action=update_api_key_device',{method:'POST',body:fd});
+    const d=await r.json();
+    if(d.ok){select.dataset.previousValue=select.value;select.dataset.currentValue=select.value;toast('Device restriction saved','ok');}
+    else{select.value=previous;toast(d.error||'Could not update device restriction','err');}
+  }catch(e){select.value=previous;toast('Connection error','err');}
+  finally{select.disabled=false;}
+};
 window.revokeKey=function(id,btn){document.getElementById('deleteItemName').textContent='this API key';openModal('deleteModal');document.getElementById('deleteConfirmBtn').onclick=async()=>{closeModal('deleteModal');const fd=new FormData();fd.append('key_id',id);const r=await fetch('?action=del_api_key',{method:'POST',body:fd});const d=await r.json();if(d.ok){const row=btn.closest('tr');if(row)row.remove();toast('Revoked','ok');}else toast('Failed','err');};};
 window.toggleEndpoint=function(header){header.closest('.endpoint-card').classList.toggle('open');};
 function openModal(id){document.getElementById(id).classList.remove('hidden');}function closeModal(id){document.getElementById(id).classList.add('hidden');}
