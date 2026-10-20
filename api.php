@@ -12,6 +12,55 @@ if (!preg_match('~^api/v1/([A-Za-z0-9_-]+)$~D', $route, $matches)) {
     exit;
 }
 $endpoint = $matches[1];
+/**
+ * Normalize phone numbers to international E.164-style format.
+ * Iranian mobile examples: 09123456789, 989123456789, +989123456789
+ * are all stored as +989123456789.
+ */
+function normalizePhoneNumber($value) {
+    if (!is_string($value) && !is_numeric($value)) return '';
+    $number = trim((string)$value);
+    if ($number === '') return '';
+
+    // Convert Persian and Arabic-Indic digits to ASCII digits.
+    $number = strtr($number, [
+        '۰'=>'0','۱'=>'1','۲'=>'2','۳'=>'3','۴'=>'4',
+        '۵'=>'5','۶'=>'6','۷'=>'7','۸'=>'8','۹'=>'9',
+        '٠'=>'0','١'=>'1','٢'=>'2','٣'=>'3','٤'=>'4',
+        '٥'=>'5','٦'=>'6','٧'=>'7','٨'=>'8','٩'=>'9'
+    ]);
+
+    // Allow common visual separators.
+    $number = preg_replace('/[\\s\\-().]+/u', '', $number);
+    $hasPlus = (strpos($number, '+') === 0);
+    $digits = preg_replace('/\\D/', '', $number);
+    if ($digits === '') return '';
+
+    // Iranian mobile: 09xxxxxxxxx or +09xxxxxxxxx -> +989xxxxxxxxx.
+    if (strlen($digits) === 11 && substr($digits, 0, 2) === '09') {
+        return '+98' . substr($digits, 1);
+    }
+    if (strlen($digits) === 12 && substr($digits, 0, 3) === '989') {
+        return '+' . $digits;
+    }
+    if (strlen($digits) === 10 && substr($digits, 0, 1) === '9') {
+        return '+98' . $digits;
+    }
+    if (strlen($digits) === 13 && substr($digits, 0, 4) === '0098') {
+        return '+' . substr($digits, 2);
+    }
+    if (strlen($digits) === 12 && substr($digits, 0, 2) === '98') {
+        return '+' . $digits;
+    }
+
+    // For other international numbers, retain an explicit + or add one
+    // when the caller supplied a country code without it.
+    if (strlen($digits) >= 7 && strlen($digits) <= 15) {
+        return '+' . $digits;
+    }
+    return '';
+}
+
 if ($endpoint === 'poll') {
 $configDir = __DIR__ . '/config/';
 
@@ -647,16 +696,32 @@ if (!$input) {
     $input = $_POST;
 }
 
-$numbers = $input['numbers'] ?? [];
-$message = trim($input['message'] ?? '');
+$numbersInput = $input['numbers'] ?? ($input['number'] ?? []);
+if (is_string($numbersInput) || is_numeric($numbersInput)) {
+    $numbersInput = [$numbersInput];
+}
+$numbers = is_array($numbersInput) ? array_values($numbersInput) : [];
+$message = trim((string)($input['message'] ?? ''));
 $scheduleTime = $input['schedule_time'] ?? '';
 $recurring = $input['recurring'] ?? 'none';
 
-if (empty($numbers) || !is_array($numbers)) {
+if (empty($numbers)) {
     http_response_code(400);
-    echo json_encode(['ok' => false, 'error' => 'numbers is required.']);
+    echo json_encode(['ok' => false, 'error' => 'number or numbers is required.']);
     exit;
 }
+$normalizedNumbers = [];
+foreach ($numbers as $number) {
+    $normalized = normalizePhoneNumber($number);
+    $digits = preg_replace('/\\D/', '', $normalized);
+    if ($normalized === '' || strlen($digits) < 7 || strlen($digits) > 15) {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => 'Invalid phone number: ' . (is_scalar($number) ? (string)$number : '[invalid value]')]);
+        exit;
+    }
+    $normalizedNumbers[] = $normalized;
+}
+$numbers = $normalizedNumbers;
 if (empty($message)) {
     http_response_code(400);
     echo json_encode(['ok' => false, 'error' => 'message is required.']);
@@ -863,28 +928,28 @@ if ($input === null && json_last_error() !== JSON_ERROR_NONE) {
     $input = $_POST;
 }
 
-$numbers = $input['numbers'] ?? [];
-$message = trim($input['message'] ?? '');
+$numbersInput = $input['numbers'] ?? ($input['number'] ?? []);
+if (is_string($numbersInput) || is_numeric($numbersInput)) {
+    $numbersInput = [$numbersInput];
+}
+$numbers = is_array($numbersInput) ? array_values($numbersInput) : [];
+$message = trim((string)($input['message'] ?? ''));
 
-if (empty($numbers) || !is_array($numbers)) {
-    sendError(400, 'numbers is required and must be a non-empty array.');
+if (empty($numbers)) {
+    sendError(400, 'number or numbers is required.');
 }
 
-
+$normalizedNumbers = [];
 foreach ($numbers as $number) {
-    $number = trim($number);
-    if (empty($number)) {
-        sendError(400, 'Empty phone number found in numbers array.');
-    }
-    if (strpos($number, '+') !== 0) {
-        sendError(400, 'Phone number must start with +: ' . $number);
-    }
-    $digitsOnly = preg_replace('/[^0-9]/', '', $number);
+    $normalized = normalizePhoneNumber($number);
+    $digitsOnly = preg_replace('/\\D/', '', $normalized);
     $digitCount = strlen($digitsOnly);
-    if ($digitCount < 7 || $digitCount > 15) {
-        sendError(400, 'Phone number must have 7-15 digits after the +: ' . $number);
+    if ($normalized === '' || $digitCount < 7 || $digitCount > 15) {
+        sendError(400, 'Invalid phone number: ' . (is_scalar($number) ? (string)$number : '[invalid value]'));
     }
+    $normalizedNumbers[] = $normalized;
 }
+$numbers = $normalizedNumbers;
 
 if (empty($message)) {
     sendError(400, 'message is required and cannot be empty.');
@@ -1522,27 +1587,14 @@ if ($input === null && json_last_error() !== JSON_ERROR_NONE) {
     $input = $_POST;
 }
 
-$number = trim($input['number'] ?? '');
+$rawNumber = $input['number'] ?? '';
+$number = normalizePhoneNumber($rawNumber);
 
-if (empty($number)) {
-    sendError(400, 'number is required');
+if ($number === '') {
+    sendError(400, 'number is required and must be a valid phone number');
 }
 
-
-if (!strpos($number, '+') !== 0) {
-    echo json_encode([
-        'ok' => true,
-        'valid' => false,
-        'number' => $number,
-        'country' => null,
-        'country_code' => null,
-        'reason' => 'Number must start with +'
-    ]);
-    exit;
-}
-
-
-$digitsOnly = preg_replace('/[^0-9]/', '', $number);
+$digitsOnly = preg_replace('/\\D/', '', $number);
 $digitCount = strlen($digitsOnly);
 
 if ($digitCount < 8 || $digitCount > 16) {
