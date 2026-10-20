@@ -20,7 +20,7 @@ RewriteRule ^dashboard/index\.php$ app.php?route=dashboard [L,QSA]
 RewriteRule ^setup\.php$ app.php?route=setup [L,QSA]
 
 # Default index fallback
-DirectoryIndex index.php
+DirectoryIndex app.php
 
 # Security headers
 <IfModule mod_headers.c>
