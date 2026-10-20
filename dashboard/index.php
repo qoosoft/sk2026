@@ -798,7 +798,7 @@ button,input,textarea,select{font-family:var(--f-ui)}button{cursor:pointer;borde
     <div class="card-title">Active API Keys</div><div class="card-sub">Manage existing keys.</div>
     <?php if (empty($apiKeys)): ?><div class="empty-state">No API keys yet</div>
     <?php else: ?><div class="table-wrap"><table class="data-table"><thead><tr><th>Name</th><th>Preview</th><th>Perms</th><th>Rate</th><th>Device scope</th><th></th></tr></thead><tbody>
-      <?php foreach ($apiKeys as $key): ?><tr data-id="<?php echo htmlspecialchars($key['id']??'', ENT_QUOTES, 'UTF-8'); ?>"><td><?php echo htmlspecialchars($key['name']??''); ?></td><td class="mono"><?php echo htmlspecialchars($key['preview']??''); ?></td><td><?php echo htmlspecialchars(implode(', ',array_slice($key['permissions']??[],0,2))); ?></td><td class="muted-text"><?php echo $key['rate_limit']??100; ?>/h</td><td><select class="form-input key-device-scope" data-key-id="<?php echo htmlspecialchars($key['id']??'', ENT_QUOTES, 'UTF-8'); ?>" onchange="updateKeyDevice(this)" style="min-width:170px;"><option value="all" <?php echo (($key['device_scope'] ?? 'all') !== 'device') ? 'selected' : ''; ?>>All devices</option><?php foreach ($devices as $device): ?><option value="<?php echo htmlspecialchars($device['device_id'] ?? '', ENT_QUOTES, 'UTF-8'); ?>" <?php echo (($key['device_scope'] ?? 'all') === 'device' && ($key['device_id'] ?? '') === ($device['device_id'] ?? '')) ? 'selected' : ''; ?>><?php echo htmlspecialchars(($device['model'] ?? 'Device') . ' — ' . ($device['device_id'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></option><?php endforeach; ?></select></td><td><button class="btn btn-danger" onclick="revokeKey('<?php echo htmlspecialchars($key['id']??'', ENT_QUOTES, 'UTF-8'); ?>',this)">Revoke</button></td></tr><?php endforeach; ?>
+      <?php foreach ($apiKeys as $key): ?><tr data-id="<?php echo htmlspecialchars($key['id']??'', ENT_QUOTES, 'UTF-8'); ?>"><td><?php echo htmlspecialchars($key['name']??''); ?></td><td class="mono"><?php echo htmlspecialchars($key['preview']??''); ?></td><td><?php echo htmlspecialchars(implode(', ',array_slice($key['permissions']??[],0,2))); ?></td><td class="muted-text"><?php echo $key['rate_limit']??100; ?>/h</td><td><select class="form-input key-device-scope" data-key-id="<?php echo htmlspecialchars($key['id']??'', ENT_QUOTES, 'UTF-8'); ?>" data-current-value="<?php echo htmlspecialchars((($key['device_scope'] ?? 'all') === 'device' ? ($key['device_id'] ?? '') : 'all'), ENT_QUOTES, 'UTF-8'); ?>" onchange="updateKeyDevice(this)" style="min-width:170px;"><option value="all" <?php echo (($key['device_scope'] ?? 'all') !== 'device') ? 'selected' : ''; ?>>All devices</option><?php foreach ($devices as $device): ?><option value="<?php echo htmlspecialchars($device['device_id'] ?? '', ENT_QUOTES, 'UTF-8'); ?>" <?php echo (($key['device_scope'] ?? 'all') === 'device' && ($key['device_id'] ?? '') === ($device['device_id'] ?? '')) ? 'selected' : ''; ?>><?php echo htmlspecialchars(($device['model'] ?? 'Device') . ' — ' . ($device['device_id'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></option><?php endforeach; ?></select></td><td><button class="btn btn-danger" onclick="revokeKey('<?php echo htmlspecialchars($key['id']??'', ENT_QUOTES, 'UTF-8'); ?>',this)">Revoke</button></td></tr><?php endforeach; ?>
     </tbody></table></div><?php endif; ?>
   </div>
 </div>
@@ -902,13 +902,13 @@ window.genApiKey=async function(){
 };
 window.copyKey=function(){const key=document.getElementById('keyText').textContent;if(navigator.clipboard){navigator.clipboard.writeText(key).then(()=>toast('Copied!','ok'));}else{const ta=document.createElement('textarea');ta.value=key;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);toast('Copied!','ok');}};
 window.updateKeyDevice=async function(select){
-  const previous=select.dataset.previousValue || select.value;
+  const previous=select.dataset.previousValue || select.dataset.currentValue || 'all';
   const fd=new FormData();fd.append('key_id',select.dataset.keyId);fd.append('device_id',select.value);
   select.disabled=true;
   try{
     const r=await fetch('?action=update_api_key_device',{method:'POST',body:fd});
     const d=await r.json();
-    if(d.ok){select.dataset.previousValue=select.value;toast('Device restriction saved','ok');}
+    if(d.ok){select.dataset.previousValue=select.value;select.dataset.currentValue=select.value;toast('Device restriction saved','ok');}
     else{select.value=previous;toast(d.error||'Could not update device restriction','err');}
   }catch(e){select.value=previous;toast('Connection error','err');}
   finally{select.disabled=false;}
