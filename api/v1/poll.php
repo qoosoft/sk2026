@@ -115,6 +115,9 @@ if (!empty($deviceId)) {
     if ($tokensChanged) saveJson('device_tokens.json', $tokens);
 }
 
+$schedulerLock = @fopen($configDir . 'scheduler.lock', 'c');
+if ($schedulerLock) flock($schedulerLock, LOCK_EX);
+
 $db = loadJson('database.json');
 $scheduled = $db['scheduled_sms'] ?? [];
 $now = time();
@@ -174,7 +177,11 @@ if ($updated) {
     saveJson('database.json', $db);
 }
 
-$queue = loadJson('sms_queue.json');
+if ($schedulerLock) {
+    flock($schedulerLock, LOCK_UN);
+    fclose($schedulerLock);
+}
+
 $devices = loadJson('device_tokens.json')['devices'] ?? [];
 $onlineIds = [];
 foreach ($devices as $d) {
@@ -187,46 +194,58 @@ usort($onlineIds, function($a, $b) {
     return ($a['sms_sent_count'] ?? 0) <=> ($b['sms_sent_count'] ?? 0);
 });
 $onlineDeviceIds = array_map(function($d) { return $d['device_id']; }, $onlineIds);
-$assignIdx = 0;
 
-// Enforce the API key's current device scope before automatic assignment.
+// Read, assign and claim queued messages while holding one exclusive lock.
+// This prevents two concurrent poll requests from claiming the same SMS.
+$queuePath = $configDir . 'sms_queue.json';
+$queueHandle = @fopen($queuePath, 'c+');
+if (!$queueHandle || !flock($queueHandle, LOCK_EX)) {
+    if (is_resource($queueHandle)) fclose($queueHandle);
+    http_response_code(500);
+    header('Content-Type: application/json');
+    echo json_encode(['ok' => false, 'error' => 'Unable to lock SMS queue']);
+    exit;
+}
+
+rewind($queueHandle);
+$queueContent = stream_get_contents($queueHandle);
+$queue = json_decode($queueContent, true);
+if (!is_array($queue)) $queue = [];
+if (!isset($queue['queue']) || !is_array($queue['queue'])) $queue['queue'] = [];
+
+// Load current API key scopes while the queue lock is held.
 $dbForScopes = loadJson('database.json');
 $apiKeysForScopes = $dbForScopes['api_keys'] ?? [];
 $keyScopes = [];
 foreach ($apiKeysForScopes as $scopeKey) {
     if (!empty($scopeKey['id'])) $keyScopes[$scopeKey['id']] = $scopeKey;
 }
-$queueChanged = false;
-if (isset($queue['queue'])) {
-    foreach ($queue['queue'] as &$item) {
-        if (($item['status'] ?? '') !== 'queued') continue;
-        $keyId = $item['api_key_id'] ?? null;
-        $keyInfo = ($keyId !== null && isset($keyScopes[$keyId])) ? $keyScopes[$keyId] : null;
-        $scope = $keyInfo['device_scope'] ?? 'all';
-        if ($scope === 'device' && !empty($keyInfo['device_id'])) {
-            // Keep restricted messages pending for their selected device, even while it is offline.
-            if (($item['assigned_device'] ?? '') !== $keyInfo['device_id']) {
-                $item['assigned_device'] = $keyInfo['device_id'];
-                $queueChanged = true;
-            }
-        } elseif (empty($item['assigned_device']) && !empty($onlineDeviceIds)) {
-            $item['assigned_device'] = $onlineDeviceIds[$assignIdx % count($onlineDeviceIds)];
-            $assignIdx++;
-            $queueChanged = true;
+
+$assignIdx = 0;
+foreach ($queue['queue'] as &$item) {
+    if (($item['status'] ?? '') !== 'queued') continue;
+    $keyId = $item['api_key_id'] ?? null;
+    $keyInfo = ($keyId !== null && isset($keyScopes[$keyId])) ? $keyScopes[$keyId] : null;
+    $scope = $keyInfo['device_scope'] ?? 'all';
+
+    if ($scope === 'device' && !empty($keyInfo['device_id'])) {
+        // A restricted key must never fall back to another device.
+        if (($item['assigned_device'] ?? '') !== $keyInfo['device_id']) {
+            $item['assigned_device'] = $keyInfo['device_id'];
         }
+    } elseif (empty($item['assigned_device']) && !empty($onlineDeviceIds)) {
+        $item['assigned_device'] = $onlineDeviceIds[$assignIdx % count($onlineDeviceIds)];
+        $assignIdx++;
     }
-    unset($item);
-    if ($queueChanged) saveJson('sms_queue.json', $queue);
 }
+unset($item);
 
 $commands = [];
-$remaining = [];
-
-if (isset($queue['queue']) && !empty($deviceId)) {
-    foreach ($queue['queue'] as $item) {
+if (!empty($deviceId)) {
+    foreach ($queue['queue'] as &$item) {
         $status = $item['status'] ?? '';
         $assigned = $item['assigned_device'] ?? '';
-        if ($status === 'queued' && (empty($assigned) || $assigned === $deviceId)) {
+        if ($status === 'queued' && !empty($assigned) && $assigned === $deviceId) {
             $commands[] = [
                 'id' => $item['id'],
                 'to' => $item['to'],
@@ -236,11 +255,33 @@ if (isset($queue['queue']) && !empty($deviceId)) {
             $item['sent_at'] = date('Y-m-d H:i:s');
             $item['assigned_device'] = $deviceId;
         }
-        $remaining[] = $item;
     }
-    $queue['queue'] = $remaining;
-    saveJson('sms_queue.json', $queue);
+    unset($item);
 }
+
+// Persist queue state before releasing the lock so another poll cannot claim
+// any message already returned in this response.
+$encodedQueue = json_encode($queue, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+if ($encodedQueue === false) {
+    flock($queueHandle, LOCK_UN);
+    fclose($queueHandle);
+    http_response_code(500);
+    header('Content-Type: application/json');
+    echo json_encode(['ok' => false, 'error' => 'Unable to encode SMS queue']);
+    exit;
+}
+rewind($queueHandle);
+if (!ftruncate($queueHandle, 0) || fwrite($queueHandle, $encodedQueue) === false) {
+    flock($queueHandle, LOCK_UN);
+    fclose($queueHandle);
+    http_response_code(500);
+    header('Content-Type: application/json');
+    echo json_encode(['ok' => false, 'error' => 'Unable to save SMS queue']);
+    exit;
+}
+fflush($queueHandle);
+flock($queueHandle, LOCK_UN);
+fclose($queueHandle);
 
 header('Content-Type: application/json');
 echo json_encode([
