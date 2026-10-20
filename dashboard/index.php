@@ -35,6 +35,29 @@ function saveJson($file, $data) {
     }
 }
 
+function updateJsonLocked($file, $callback) {
+    global $configDir;
+    $fp = @fopen($configDir . $file, 'c+');
+    if (!$fp || !flock($fp, LOCK_EX)) {
+        if (is_resource($fp)) fclose($fp);
+        return false;
+    }
+    rewind($fp);
+    $data = json_decode(stream_get_contents($fp), true);
+    if (!is_array($data)) $data = [];
+    $callback($data);
+    $encoded = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+    $saved = false;
+    if ($encoded !== false) {
+        rewind($fp);
+        $saved = ftruncate($fp, 0) && fwrite($fp, $encoded) !== false;
+        if ($saved) fflush($fp);
+    }
+    flock($fp, LOCK_UN);
+    fclose($fp);
+    return $saved;
+}
+
 function logActivity($type, $detail) {
     $activity = loadJson('activity.json');
     if (!isset($activity['logs'])) $activity['logs'] = [];
@@ -142,18 +165,19 @@ if ($isAuthed && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['action'])
         }
 
         $msgId = 'msg_' . uniqid();
-        $queue = loadJson('sms_queue.json');
-        if (!isset($queue['queue'])) $queue['queue'] = [];
-        foreach ($numberList as $num) {
-            $queue['queue'][] = [
-                'id' => $msgId . '_' . mt_rand(1000,9999), 'message_id' => $msgId,
-                'to' => $num, 'message' => $message, 'status' => 'queued',
-                'created_at' => date('Y-m-d H:i:s'), 'sent_at' => null,
-                'source' => 'dashboard', 'api_key_id' => null, 'error' => null,
-                'assigned_device' => $assigned
-            ];
-        }
-        saveJson('sms_queue.json', $queue);
+        $queueSaved = updateJsonLocked('sms_queue.json', function (&$queue) use ($numberList, $message, $assigned, $msgId) {
+            if (!isset($queue['queue']) || !is_array($queue['queue'])) $queue['queue'] = [];
+            foreach ($numberList as $num) {
+                $queue['queue'][] = [
+                    'id' => $msgId . '_' . mt_rand(1000,9999), 'message_id' => $msgId,
+                    'to' => $num, 'message' => $message, 'status' => 'queued',
+                    'created_at' => date('Y-m-d H:i:s'), 'sent_at' => null,
+                    'source' => 'dashboard', 'api_key_id' => null, 'error' => null,
+                    'assigned_device' => $assigned
+                ];
+            }
+        });
+        if (!$queueSaved) { echo json_encode(['ok' => false, 'error' => 'Unable to save SMS queue']); exit; }
         logActivity('sms_sent', 'Queued SMS to ' . count($numberList) . ' number(s): ' . implode(', ', $numberList));
         echo json_encode(['ok' => true, 'msg_id' => $msgId, 'count' => count($numberList), 'device' => $assigned]);
         exit;
@@ -196,9 +220,9 @@ if ($isAuthed && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['action'])
 
     if ($action === 'retry_sms') {
         $msgId = $_POST['msg_id'] ?? '';
-        $queue = loadJson('sms_queue.json');
         $found = false;
-        if (isset($queue['queue'])) {
+        $queueSaved = updateJsonLocked('sms_queue.json', function (&$queue) use ($msgId, &$found) {
+            if (!isset($queue['queue']) || !is_array($queue['queue'])) return;
             foreach ($queue['queue'] as &$item) {
                 if (($item['id'] ?? '') === $msgId || ($item['message_id'] ?? '') === $msgId) {
                     $item['status'] = 'queued';
@@ -208,9 +232,10 @@ if ($isAuthed && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['action'])
                 }
             }
             unset($item);
-        }
-        if ($found) {
-            saveJson('sms_queue.json', $queue);
+        });
+        if (!$queueSaved) {
+            echo json_encode(['ok' => false, 'error' => 'Unable to save SMS queue']);
+        } elseif ($found) {
             logActivity('sms_sent', 'Retried SMS: ' . $msgId);
             echo json_encode(['ok' => true]);
         } else {
