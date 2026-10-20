@@ -15,6 +15,41 @@ function smskitCleanupExpiredRecords()
         return;
     }
 
+    // Use the gateway's configured timezone so timestamps are interpreted consistently.
+    $settingsPath = $configDir . 'settings.json';
+    if (is_file($settingsPath)) {
+        $settings = json_decode((string) @file_get_contents($settingsPath), true);
+        if (is_array($settings) && !empty($settings['timezone'])) {
+            $timezone = stripslashes((string) $settings['timezone']);
+            if (in_array($timezone, DateTimeZone::listIdentifiers(), true)) {
+                date_default_timezone_set($timezone);
+            }
+        }
+    }
+
+    // API devices poll frequently; run cleanup at most once per hour.
+    $markerPath = $configDir . '.retention_cleanup';
+    $marker = @fopen($markerPath, 'c+');
+    if (!$marker || !flock($marker, LOCK_EX)) {
+        if (is_resource($marker)) {
+            fclose($marker);
+        }
+        return;
+    }
+    rewind($marker);
+    $lastRun = (int) trim((string) stream_get_contents($marker));
+    if ($lastRun > 0 && (time() - $lastRun) < 3600) {
+        flock($marker, LOCK_UN);
+        fclose($marker);
+        return;
+    }
+    rewind($marker);
+    ftruncate($marker, 0);
+    fwrite($marker, (string) time());
+    fflush($marker);
+    flock($marker, LOCK_UN);
+    fclose($marker);
+
     $cutoff = time() - (30 * 86400);
 
     $pruneJsonFile = function ($filename, $pruner) use ($configDir) {
