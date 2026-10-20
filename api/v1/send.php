@@ -46,8 +46,16 @@ if (strlen($message) > 1600) {
 }
 
 $msgId = 'msg_' . uniqid();
-$queue = loadJson('sms_queue.json');
-if (!isset($queue['queue'])) $queue['queue'] = [];
+$queuePath = $configDir . 'sms_queue.json';
+$queueHandle = @fopen($queuePath, 'c+');
+if (!$queueHandle || !flock($queueHandle, LOCK_EX)) {
+    if (is_resource($queueHandle)) fclose($queueHandle);
+    sendError(500, 'Unable to lock SMS queue.');
+}
+rewind($queueHandle);
+$queue = json_decode(stream_get_contents($queueHandle), true);
+if (!is_array($queue)) $queue = [];
+if (!isset($queue['queue']) || !is_array($queue['queue'])) $queue['queue'] = [];
 
 $sentCount = 0;
 foreach ($numbers as $number) {
@@ -67,7 +75,21 @@ foreach ($numbers as $number) {
     $sentCount++;
 }
 
-saveJson('sms_queue.json', $queue);
+$encodedQueue = json_encode($queue, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+if ($encodedQueue === false) {
+    flock($queueHandle, LOCK_UN);
+    fclose($queueHandle);
+    sendError(500, 'Unable to encode SMS queue.');
+}
+rewind($queueHandle);
+if (!ftruncate($queueHandle, 0) || fwrite($queueHandle, $encodedQueue) === false) {
+    flock($queueHandle, LOCK_UN);
+    fclose($queueHandle);
+    sendError(500, 'Unable to save SMS queue.');
+}
+fflush($queueHandle);
+flock($queueHandle, LOCK_UN);
+fclose($queueHandle);
 
 $numberList = implode(', ', $numbers);
 logActivity('api_sms_sent', 'API sent SMS to ' . $sentCount . ' number(s): ' . $numberList);
