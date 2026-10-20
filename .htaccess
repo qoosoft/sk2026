@@ -8,12 +8,16 @@ RewriteRule ^(.*)$ https://%{HTTP_HOST}/$1 [L,R=301]
 # Block direct access to config folder
 RewriteRule ^config/ - [F,L]
 
-# Pretty URLs for API v1
+# Central dispatcher for legacy API URLs (including direct .php URLs).
+# Keep query strings and POST bodies intact; the endpoint handler remains compatible.
 RewriteBase /
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule ^api/v1/([^/]+)/?$ api/v1/$1.php [L,QSA]
-RewriteRule ^api/v1/([^/]+)/([^/]+)/?$ api/v1/$1.php?id=$2 [L,QSA]
+RewriteRule ^api/v1/([^/]+)/([^/]+)/?$ app.php?route=api/v1/$1&id=$2 [L,QSA]
+RewriteRule ^api/v1/([^/]+?)(?:\.php)?/?$ app.php?route=api/v1/$1 [L,QSA]
+
+# Route dashboard and installer through the central entry point; static assets remain direct.
+RewriteRule ^dashboard/?$ app.php?route=dashboard [L,QSA]
+RewriteRule ^dashboard/index\.php$ app.php?route=dashboard [L,QSA]
+RewriteRule ^setup\.php$ app.php?route=setup [L,QSA]
 
 # Default index fallback
 DirectoryIndex index.php
