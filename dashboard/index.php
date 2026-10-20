@@ -192,14 +192,24 @@ if ($isAuthed && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['action'])
         if (empty($numberList) || empty($message) || empty($scheduleTime)) {
             echo json_encode(['ok' => false, 'error' => 'All fields are required']); exit;
         }
+        $schedulerLock = @fopen($configDir . 'scheduler.lock', 'c');
+        if (!$schedulerLock || !flock($schedulerLock, LOCK_EX)) {
+            if (is_resource($schedulerLock)) fclose($schedulerLock);
+            http_response_code(500);
+            echo json_encode(['ok' => false, 'error' => 'Unable to lock scheduler']);
+            exit;
+        }
+        // Read latest state under the same lock used by poll.php and API scheduling.
         $db = loadJson('database.json');
-        if (!isset($db['scheduled_sms'])) $db['scheduled_sms'] = [];
+        if (!isset($db['scheduled_sms']) || !is_array($db['scheduled_sms'])) $db['scheduled_sms'] = [];
         $db['scheduled_sms'][] = [
             'id' => 'sched_' . uniqid(), 'numbers' => $numberList, 'message' => $message,
             'schedule_time' => $scheduleTime, 'recurring' => $recurring,
             'status' => 'pending', 'created_at' => date('Y-m-d H:i:s')
         ];
         saveJson('database.json', $db);
+        flock($schedulerLock, LOCK_UN);
+        fclose($schedulerLock);
         logActivity('schedule', 'Scheduled SMS for ' . $scheduleTime);
         echo json_encode(['ok' => true]);
         exit;
@@ -207,12 +217,21 @@ if ($isAuthed && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['action'])
 
     if ($action === 'del_schedule') {
         $schedId = $_POST['sched_id'] ?? '';
+        $schedulerLock = @fopen($configDir . 'scheduler.lock', 'c');
+        if (!$schedulerLock || !flock($schedulerLock, LOCK_EX)) {
+            if (is_resource($schedulerLock)) fclose($schedulerLock);
+            http_response_code(500);
+            echo json_encode(['ok' => false, 'error' => 'Unable to lock scheduler']);
+            exit;
+        }
         $db = loadJson('database.json');
-        if (isset($db['scheduled_sms'])) {
+        if (isset($db['scheduled_sms']) && is_array($db['scheduled_sms'])) {
             $db['scheduled_sms'] = array_values(array_filter($db['scheduled_sms'],
                 fn($s) => ($s['id'] ?? '') !== $schedId));
         }
         saveJson('database.json', $db);
+        flock($schedulerLock, LOCK_UN);
+        fclose($schedulerLock);
         logActivity('schedule', 'Deleted scheduled SMS: ' . $schedId);
         echo json_encode(['ok' => true]);
         exit;
