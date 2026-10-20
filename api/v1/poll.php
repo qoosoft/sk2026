@@ -72,30 +72,47 @@ $android = $_GET['android'] ?? 'Unknown';
 
 if (!empty($deviceId)) {
     $tokens = loadJson('device_tokens.json');
-    if (!isset($tokens['devices'])) $tokens['devices'] = [];
+    if (!isset($tokens['devices']) || !is_array($tokens['devices'])) $tokens['devices'] = [];
     $found = false;
+    $tokensChanged = false;
+    $nowTimestamp = time();
+    $nowString = date('Y-m-d H:i:s');
+
     foreach ($tokens['devices'] as &$dev) {
         if (($dev['device_id'] ?? '') === $deviceId) {
-            $dev['last_seen'] = date('Y-m-d H:i:s');
-            $dev['model'] = $model;
-            $dev['android'] = $android;
-            $dev['status'] = 'online';
             $found = true;
+            $lastSeenTimestamp = strtotime($dev['last_seen'] ?? '') ?: 0;
+
+            // Phones may poll every 5 seconds. Persist the heartbeat every 15 seconds
+            // instead of rewriting the whole device JSON on every single poll.
+            if (($nowTimestamp - $lastSeenTimestamp) >= 15 ||
+                ($dev['status'] ?? '') !== 'online' ||
+                ($dev['model'] ?? '') !== $model ||
+                ($dev['android'] ?? '') !== $android) {
+                $dev['last_seen'] = $nowString;
+                $dev['model'] = $model;
+                $dev['android'] = $android;
+                $dev['status'] = 'online';
+                $tokensChanged = true;
+            }
             break;
         }
     }
     unset($dev);
+
     if (!$found) {
         $tokens['devices'][] = [
             'device_id' => $deviceId,
             'model' => $model,
             'android' => $android,
             'status' => 'online',
-            'last_seen' => date('Y-m-d H:i:s'),
+            'last_seen' => $nowString,
             'sms_sent_count' => 0
         ];
+        $tokensChanged = true;
     }
-    saveJson('device_tokens.json', $tokens);
+
+    if ($tokensChanged) saveJson('device_tokens.json', $tokens);
 }
 
 $db = loadJson('database.json');
